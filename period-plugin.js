@@ -16,11 +16,12 @@ const app={
     // ── State ──
     const S={
       showSettings:false,
-      cfg:{cycleLen:28,periodLen:5,charId:'',charName:'',autoSync:true},
+      cfg:{cycleLen:28,periodLen:5,charId:'',charName:'',convId:'',userName:'',autoSync:true},
       periodDates:[],  // 每次月經開始日 ['2026-08-02','2026-07-05',...]
       viewYear:new Date().getFullYear(),
       viewMonth:new Date().getMonth(),
       charList:[],
+      convList:[],
       syncMsg:'',syncErr:false,
       probeResult:null,
     };
@@ -34,7 +35,18 @@ const app={
     const saveDates=()=>sv('pc_dates',S.periodDates);
 
     try{S.charList=await roche.character.list()||[]}catch(_){}
+    try{S.convList=await roche.conversation.list()||[]}catch(_){}
+    // 自動填入 user name
+    if(!S.cfg.userName){
+      try{const u=await roche.persona.getActiveUserPersona();if(u)S.cfg.userName=u.name||u.handle||'';}catch(_){}
+    }
     if(!S.cfg.charId&&S.charList.length){S.cfg.charId=S.charList[0].id;S.cfg.charName=S.charList[0].name}
+    // 自動匹配對話：找跟選定角色對應的對話
+    if(!S.cfg.convId&&S.convList.length){
+      const match=S.convList.find(c=>c.contactId===S.cfg.charId||c.name===S.cfg.charName);
+      if(match)S.cfg.convId=match.conversationId||match.id;
+      else S.cfg.convId=S.convList[0].conversationId||S.convList[0].id;
+    }
 
     // ── 週期計算 ──
     function dateStr(d){return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
@@ -124,20 +136,25 @@ const app={
     async function syncToMemory(){
       const text=buildSyncText();
       if(!text){S.syncMsg='請先標記至少一次月經開始日';S.syncErr=true;render();return;}
+      const convId=S.cfg.convId;
+      if(!convId){S.syncMsg='找不到對話 ID，請到設定選擇對話';S.syncErr=true;render();return;}
       try{
-        // 嘗試 roche.memory.write()
-        const result=await roche.memory.write(text);
-        S.syncMsg='✅ 已同步到聊天記憶';S.syncErr=false;
-        toast('✨ 已同步月經狀態給 '+S.cfg.charName);
+        const today=dateStr(new Date());
+        await roche.memory.write({
+          conversationId: convId,
+          summaryText: text,
+          who: [S.cfg.userName||'用戶', S.cfg.charName||'角色'],
+          action: text,
+          when: today,
+          where: '月經日曆同步',
+          source: 'plugin:period-calendar'
+        });
+        S.syncMsg='✅ 已同步到「'+S.cfg.charName+'」的聊天記憶';
+        S.syncErr=false;
+        toast('✨ 已同步給 '+(S.cfg.charName||'角色'));
       }catch(e){
-        // 如果 write 失敗，嘗試帶參數
-        try{
-          await roche.memory.write({text,type:'fact'});
-          S.syncMsg='✅ 已同步';S.syncErr=false;
-          toast('✨ 已同步');
-        }catch(e2){
-          S.syncMsg='同步失敗：'+e2.message+'。可能需要探測 API 格式';S.syncErr=true;
-        }
+        S.syncMsg='同步失敗：'+e.message;
+        S.syncErr=true;
       }
       render();
     }
@@ -284,10 +301,10 @@ const app={
       const c=S.cfg;
       let h=`<div class="pc-mask"><div class="pc-set"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span style="font-weight:700;font-size:15px">設定</span><button data-a="close-set" style="background:none;border:none;font-size:18px;color:${T3};cursor:pointer">✕</button></div>`;
       h+=`<label class="pc-sl">同步給誰？</label><select class="pc-si" data-f="charId">${S.charList.map(ch=>`<option value="${esc(ch.id)}" ${ch.id===c.charId?'selected':''}>${esc(ch.name||ch.handle)}</option>`).join('')}</select>`;
+      h+=`<label class="pc-sl">寫入哪個對話的記憶？</label><select class="pc-si" data-f="convId">${S.convList.map(cv=>{const cid=cv.conversationId||cv.id;return`<option value="${esc(cid)}" ${cid===c.convId?'selected':''}>${esc(cv.name||cv.handle||cid)}</option>`}).join('')}</select>`;
+      h+=`<label class="pc-sl">你的名字</label><input class="pc-si" data-f="userName" value="${esc(c.userName)}" placeholder="用於記憶中標記「誰」">`;
       h+=`<label class="pc-sl">週期長度（天）</label><input class="pc-si" data-f="cycleLen" type="number" min="20" max="45" value="${c.cycleLen||28}" style="width:100px">`;
       h+=`<label class="pc-sl">經期長度（天）</label><input class="pc-si" data-f="periodLen" type="number" min="2" max="10" value="${c.periodLen||5}" style="width:100px">`;
-      h+=`<button data-a="probe-write" class="pc-sbtn" style="background:#333;margin-top:12px">🧪 探測 memory.write() 格式</button>`;
-      if(S.probeResult)h+=`<div style="font-size:10px;font-family:monospace;color:${T2};background:#f5f5f5;border:1px solid ${BD};border-radius:8px;padding:8px;margin-top:8px;white-space:pre-wrap;max-height:150px;overflow-y:auto">${esc(S.probeResult)}</div>`;
       h+=`<button data-a="save-set" class="pc-sbtn">儲存設定</button>`;
       h+=`<button data-a="clear-dates" class="pc-sbtn" style="background:#fff;color:${PK};border:1px solid ${PK};margin-top:8px">🗑️ 清除所有記錄</button>`;
       h+=`</div></div>`;
@@ -329,6 +346,11 @@ const app={
         });
         const ch=S.charList.find(c=>c.id===S.cfg.charId);
         if(ch)S.cfg.charName=ch.name||ch.handle||'';
+        // 如果切了角色，自動匹配對話
+        if(ch&&!S.cfg.convId){
+          const match=S.convList.find(c=>c.contactId===S.cfg.charId||c.name===S.cfg.charName);
+          if(match)S.cfg.convId=match.conversationId||match.id;
+        }
         saveCfg();S.showSettings=false;toast('已儲存');render();
       }
       else if(a==='clear-dates'){
