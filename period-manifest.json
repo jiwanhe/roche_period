@@ -4,7 +4,7 @@
   "version": "1.0.0",
   "description": "同步月經週期給 TA，讓角色自然關心你的身體狀況",
   "author": "予佟",
-  "entry": "plugin.js",
+  "entry": "https://raw.githubusercontent.com/jiwanhe/roche_period/refs/heads/main/period-plugin.js",
   "hash": "",
   "permissions": [
     "storage",
