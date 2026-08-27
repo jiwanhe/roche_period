@@ -121,7 +121,7 @@ const app={
     }
 
     // ── 體重 / BMI ──
-    function getSortedWeights(){return[...S.weights].sort((a,b)=>a.date.localeCompare(b.date))}
+    function getSortedWeights(){return[...S.weights].sort((a,b)=>(a.utcTime||a.date).localeCompare(b.utcTime||b.date))}
     function getLatestWeight(){const s=getSortedWeights();return s.length?s[s.length-1]:null}
     function calcBMI(kg){
       const h=parseFloat(S.cfg.heightCm);
@@ -174,7 +174,8 @@ const app={
       if(wStats){
         const bmi=calcBMI(wStats.latest.kg);
         const cat=bmiCategory(bmi);
-        t+=`\n【體重狀況】\n最新體重：${wStats.latest.kg}kg（${wStats.latest.date}）\n`;
+        const utcStr=wStats.latest.utcTime?wStats.latest.utcTime.replace('T',' ').slice(0,16)+' UTC':wStats.latest.date;
+        t+=`\n【體重狀況】\n最新體重：${wStats.latest.kg}kg（測量時間：${utcStr}）\n`;
         if(bmi)t+=`BMI：${bmi.toFixed(1)}（${cat.label}）\n`;
         if(wStats.trend!=null){
           const dir=wStats.trend>0?'增加':wStats.trend<0?'減少':'持平';
@@ -193,7 +194,7 @@ const app={
         await roche.memory.write({
           conversationId:convId,summaryText:text,
           who:[S.cfg.userName||'用戶',S.cfg.charName||'角色'],
-          action:text,when:ds(new Date()),where:'健康日曆同步',
+          action:text,when:new Date().toISOString(),where:'健康日曆同步',
           source:'plugin:health-calendar'
         });
         S.syncMsg='✅ 已同步到「'+S.cfg.charName+'」的記憶';S.syncErr=false;
@@ -410,7 +411,8 @@ const app={
       sorted.slice(0,30).forEach((w)=>{
         const idx=S.weights.indexOf(w);
         const bmi=calcBMI(w.kg);
-        h+=`<div class="pc-history-item"><div><div class="pc-history-date">${w.date}</div><div class="pc-history-info">${w.kg} kg${bmi?' · BMI '+bmi.toFixed(1):''}</div></div><button class="pc-history-del" data-a="del-weight" data-idx="${idx}">✕</button></div>`;
+        const utcLabel=w.utcTime?w.utcTime.slice(11,16)+' UTC':'';
+        h+=`<div class="pc-history-item"><div><div class="pc-history-date">${w.date} ${utcLabel?'<span style="font-weight:400;color:'+T3+';font-size:11px">'+utcLabel+'</span>':''}</div><div class="pc-history-info">${w.kg} kg${bmi?' · BMI '+bmi.toFixed(1):''}</div></div><button class="pc-history-del" data-a="del-weight" data-idx="${idx}">✕</button></div>`;
       });
       if(!sorted.length)h+=`<div style="padding:20px;text-align:center;color:${T3}">還沒有記錄</div>`;
       h+=`</div></div>`;
@@ -435,7 +437,9 @@ const app={
     }
 
     function vEditWeight(){
-      return`<div class="pc-mask"><div class="pc-set"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span style="font-weight:700;font-size:15px">新增體重記錄</span><button data-a="close-edit-weight" style="background:none;border:none;font-size:18px;color:${T3};cursor:pointer">✕</button></div><label class="pc-sl">日期</label><input class="pc-si" type="date" data-f="w-date" value="${ds(new Date())}"><label class="pc-sl">體重（kg）</label><input class="pc-si" type="number" step="0.1" data-f="w-kg" placeholder="例如 52.3"><button data-a="save-weight" class="pc-sbtn" style="background:${WT}">新增</button></div></div>`;
+      const now=new Date();
+      const hh=String(now.getHours()).padStart(2,'0'),mm=String(now.getMinutes()).padStart(2,'0');
+      return`<div class="pc-mask"><div class="pc-set"><div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:14px"><span style="font-weight:700;font-size:15px">新增體重記錄</span><button data-a="close-edit-weight" style="background:none;border:none;font-size:18px;color:${T3};cursor:pointer">✕</button></div><label class="pc-sl">日期</label><input class="pc-si" type="date" data-f="w-date" value="${ds(now)}"><label class="pc-sl">時間（當地時間，會自動換算成 UTC 儲存）</label><input class="pc-si" type="time" data-f="w-time" value="${hh}:${mm}"><label class="pc-sl">體重（kg）</label><input class="pc-si" type="number" step="0.1" data-f="w-kg" placeholder="例如 52.3"><button data-a="save-weight" class="pc-sbtn" style="background:${WT}">新增</button></div></div>`;
     }
 
     function vSettings(){
@@ -483,13 +487,20 @@ const app={
       }
       else if(a==='add-weight'){S.editingWeight=true;render();}
       else if(a==='save-weight'){
-        const date=root.querySelector('[data-f="w-date"]')?.value;
+        const dateVal=root.querySelector('[data-f="w-date"]')?.value;
+        const timeVal=root.querySelector('[data-f="w-time"]')?.value||'00:00';
         const kg=parseFloat(root.querySelector('[data-f="w-kg"]')?.value);
-        if(!date||!kg||kg<=0){toast('請填寫完整資訊');return;}
-        const existing=S.weights.findIndex(w=>w.date===date);
-        if(existing>=0)S.weights[existing].kg=kg;
-        else S.weights.push({date,kg});
-        S.weights.sort((a,b)=>a.date.localeCompare(b.date));
+        if(!dateVal||!kg||kg<=0){toast('請填寫完整資訊');return;}
+        // 組成當地時間的 Date 物件，再轉成 UTC ISO 字串儲存
+        const [y,mo,d]=dateVal.split('-').map(Number);
+        const [hh,mi]=timeVal.split(':').map(Number);
+        const localDt=new Date(y,mo-1,d,hh,mi);
+        const utcIso=localDt.toISOString(); // 例如 2026-08-26T13:05:00.000Z
+        const dateKey=ds(localDt); // 仍用當地日期當作分組/排序的 key
+        const existing=S.weights.findIndex(w=>w.date===dateKey&&w.utcTime&&w.utcTime.slice(0,16)===utcIso.slice(0,16));
+        if(existing>=0)S.weights[existing]={date:dateKey,kg,utcTime:utcIso};
+        else S.weights.push({date:dateKey,kg,utcTime:utcIso});
+        S.weights.sort((a,b)=>(a.utcTime||a.date).localeCompare(b.utcTime||b.date));
         saveWeights();S.editingWeight=false;toast('已記錄 '+kg+'kg');render();
       }
       else if(a==='del-weight'){const idx=parseInt(b.dataset.idx);if(!isNaN(idx)){S.weights.splice(idx,1);saveWeights();toast('已刪除');render();}}
