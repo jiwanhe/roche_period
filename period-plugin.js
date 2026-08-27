@@ -61,6 +61,7 @@ const app={
     function ds(d){return`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`}
     function pd(s){const[y,m,d]=s.split('-').map(Number);return new Date(y,m-1,d)}
     function addDays(d,n){const r=new Date(d);r.setDate(r.getDate()+n);return r}
+    function toRocheUTC(d){const dt=d instanceof Date?d:new Date(d);return`${dt.getUTCFullYear()}-${String(dt.getUTCMonth()+1).padStart(2,'0')}-${String(dt.getUTCDate()).padStart(2,'0')} ${String(dt.getUTCHours()).padStart(2,'0')}:${String(dt.getUTCMinutes()).padStart(2,'0')} UTC`}
     function diffDays(a,b){return Math.round((b-a)/86400000)}
 
     // ── 週期推算 ──
@@ -174,7 +175,7 @@ const app={
       if(wStats){
         const bmi=calcBMI(wStats.latest.kg);
         const cat=bmiCategory(bmi);
-        const utcStr=wStats.latest.utcTime?wStats.latest.utcTime.replace('T',' ').slice(0,16)+' UTC':wStats.latest.date;
+        const utcStr=wStats.latest.utcTime?toRocheUTC(wStats.latest.utcTime):wStats.latest.date;
         t+=`\n【體重狀況】\n最新體重：${wStats.latest.kg}kg（測量時間：${utcStr}）\n`;
         if(bmi)t+=`BMI：${bmi.toFixed(1)}（${cat.label}）\n`;
         if(wStats.trend!=null){
@@ -194,7 +195,7 @@ const app={
         await roche.memory.write({
           conversationId:convId,summaryText:text,
           who:[S.cfg.userName||'用戶',S.cfg.charName||'角色'],
-          action:text,when:new Date().toISOString(),where:'健康日曆同步',
+          action:text,when:toRocheUTC(new Date())+' -> '+toRocheUTC(new Date()),where:'健康日曆同步',
           source:'plugin:health-calendar'
         });
         S.syncMsg='✅ 已同步到「'+S.cfg.charName+'」的記憶';S.syncErr=false;
@@ -411,7 +412,7 @@ const app={
       sorted.slice(0,30).forEach((w)=>{
         const idx=S.weights.indexOf(w);
         const bmi=calcBMI(w.kg);
-        const utcLabel=w.utcTime?w.utcTime.slice(11,16)+' UTC':'';
+        const utcLabel=w.utcTime?toRocheUTC(w.utcTime).slice(11):'';
         h+=`<div class="pc-history-item"><div><div class="pc-history-date">${w.date} ${utcLabel?'<span style="font-weight:400;color:'+T3+';font-size:11px">'+utcLabel+'</span>':''}</div><div class="pc-history-info">${w.kg} kg${bmi?' · BMI '+bmi.toFixed(1):''}</div></div><button class="pc-history-del" data-a="del-weight" data-idx="${idx}">✕</button></div>`;
       });
       if(!sorted.length)h+=`<div style="padding:20px;text-align:center;color:${T3}">還沒有記錄</div>`;
