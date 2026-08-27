@@ -5,7 +5,7 @@
 (function(){
 'use strict';
 const app={
-  id:'health-cal',name:'健康日曆',icon:'monitor_heart',iconImage:'',
+  id:'health-cal',name:'健康日曆',icon:'favorite',iconImage:'',
 
   async mount(container,roche){
     const PK='#FF6B81',PKL='#FFF0F3',PKD='#E84565',BG='#fff',T1='#222',T2='#666',T3='#999',BD='#F0F0F0';
